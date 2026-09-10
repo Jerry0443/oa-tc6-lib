@@ -7,6 +7,8 @@
 #include "tc6-lwip.h"
 #include "gptp-gm.h"
 
+#define EGRESS_LATENCY           (12140)     /* nanoseconds; may be negative */
+
 /* PTP / 802.1AS frame layout constants */
 #define PTP_ETHERTYPE            (0x88F7u)
 #define PTP_TRANSPORT_SPECIFIC   (0x1u)   /* 802.1AS marker in high nibble of byte 0 */
@@ -254,8 +256,16 @@ void gPTP_GM_OnTxTimestamp(int8_t idx, bool success, uint8_t tsc, uint64_t times
             gm->syncPending = false;
             if (success) {
                 uint32_t seconds = (uint32_t)(timestamp >> 32);
-                uint32_t nanos = (uint32_t)(timestamp & 0xFFFFFFFFu);
-                BuildFollowUpFrame(gm, gm->pendingSequenceId, seconds, nanos);
+                int64_t nanos = (int64_t)(timestamp & 0xFFFFFFFFu) + EGRESS_LATENCY;
+
+                if (nanos >= 1000000000u) {
+                    nanos -= 1000000000;
+                    seconds++;
+                } else if (nanos < 0) {
+                    nanos += 1000000000;
+                    seconds--;
+                }
+                BuildFollowUpFrame(gm, gm->pendingSequenceId, seconds, (uint32_t)nanos);
                 (void)TC6LwIP_SendRawEthernetPacket(idx, gm->followUpBuf, FOLLOWUP_FRAME_LEN, 0u, OnFollowUpSent, gm);
             } else {
                 gm->missedCount++; /* skip this Follow_Up, no retry */
